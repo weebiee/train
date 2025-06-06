@@ -1,6 +1,8 @@
 import json
+import os
 import pathlib
 from typing import Union, Any, Optional
+from functools import cache, cached_property
 
 import torch
 import torch.nn.functional as F
@@ -14,11 +16,11 @@ from transformers import (
     AutoModel,
     BitsAndBytesConfig
 )
+from tokenizers import Tokenizer
 
-SENTIMENTS = ['positive', 'negative', 'neutral']
 
 class EmbeddingDataset(Dataset):
-    def __init__(self, data_path: str, tokenizer, max_length: int = 512):
+    def __init__(self, data_path: str, tokenizer, sentiments: list[str], max_length: int = 512):
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -27,6 +29,7 @@ class EmbeddingDataset(Dataset):
 
         self.queries = []
         self.responses = []
+        self.sentiments = sentiments
 
         for item in self.data:
             self.queries.append(item['query'])
@@ -37,7 +40,7 @@ class EmbeddingDataset(Dataset):
 
     def __getitem__(self, idx):
         query = self.queries[idx]
-        response = self.responses[idx]
+        response_idx = self.sentiments.index(self.responses[idx])
 
         # Tokenize query and positive
         query_encoded = self.tokenizer(
@@ -48,30 +51,26 @@ class EmbeddingDataset(Dataset):
             return_tensors='pt'
         )
 
-        response_encoded = self.tokenizer(
-            response,
-            max_length=self.max_length,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
-        )
-
         return {
             'query_input_ids': query_encoded['input_ids'].squeeze(),
             'query_attention_mask': query_encoded['attention_mask'].squeeze(),
-            'response_input_ids': response_encoded['input_ids'].squeeze(),
-            'response_attention_mask': response_encoded['attention_mask'].squeeze(),
+            'response_sentiment_idx': response_idx
         }
 
 
 class EmbeddingModel(torch.nn.Module):
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, tokenizer: Tokenizer, sentiments: list[str], max_length: int = 512):
         super().__init__()
+        self.tokenizer = tokenizer
+        self.sentiments = sentiments
+        self.max_length = max_length
+
         self.model = AutoModel.from_pretrained(
             model_name,
             trust_remote_code=True,
             quantization_config=BitsAndBytesConfig(load_in_8bit=True)
         )
+        self.device = self.model.device
 
         lora_config = LoraConfig(
             task_type=TaskType.FEATURE_EXTRACTION,
@@ -93,6 +92,11 @@ class EmbeddingModel(torch.nn.Module):
 
 
 class EmbeddingTrainer(Trainer):
+    @cached_property
+    def sentiment_tokens(self):
+        return self.model.tokenizer(self.model.sentiments, return_tensors='pt', padding='max_length',
+                                    max_length=self.model.max_length).to(device=self.model.device)
+
     def prediction_step(
             self,
             model: nn.Module,
@@ -100,7 +104,7 @@ class EmbeddingTrainer(Trainer):
             prediction_loss_only: bool,
             ignore_keys: Optional[list[str]] = None,
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
-        has_labels = all(key in inputs for key in ['query_input_ids', 'positive_input_ids'])
+        has_labels = all(key in inputs for key in ['query_input_ids', 'response_input_ids'])
 
         inputs = self._prepare_inputs(inputs)
 
@@ -114,9 +118,10 @@ class EmbeddingTrainer(Trainer):
                     attention_mask=inputs['query_attention_mask']
                 )
 
+                response_idx = inputs['response_sentiment_idx']
                 response_embeddings = model(
-                    input_ids=inputs['response_input_ids'],
-                    attention_mask=inputs['response_attention_mask']
+                    input_ids=self.sentiment_tokens['input_ids'][response_idx],
+                    attention_mask=self.sentiment_tokens['attention_mask'][response_idx]
                 )
 
                 # Normalize embeddings for cosine similarity
@@ -150,9 +155,10 @@ class EmbeddingTrainer(Trainer):
             attention_mask=inputs['query_attention_mask']
         )
 
+        label_idx = inputs['response_sentiment_idx']
         response_embeddings = model(
-            input_ids=inputs['response_input_ids'],
-            attention_mask=inputs['response_attention_mask']
+            input_ids=self.sentiment_tokens['input_ids'],
+            attention_mask=self.sentiment_tokens['attention_mask']
         )
 
         # Normalize embeddings
@@ -170,17 +176,18 @@ def main():
     # Model and tokenizer
     model_name = "Alibaba-NLP/gte-Qwen2-1.5B-instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    sentiments = ['positive', 'negative', 'neutral']
 
     # Add padding token if it doesn't exist
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Initialize model
-    model = EmbeddingModel(model_name)
+    model = EmbeddingModel(model_name, tokenizer, sentiments)
 
     # Dataset
-    train_dataset = EmbeddingDataset("dataset/train.json", tokenizer)
-    eval_dataset = EmbeddingDataset("dataset/test.json", tokenizer)
+    train_dataset = EmbeddingDataset("dataset/train.json", tokenizer, sentiments)
+    # eval_dataset = EmbeddingDataset("dataset/test.json", tokenizer, sentiments)
 
     # Training arguments
     training_args = TrainingArguments(
@@ -201,24 +208,18 @@ def main():
         report_to=None,
     )
 
-    # Data collator (if needed for custom batching)
-    def data_collator(features):
-        batch = {}
-        for key in features[0].keys():
-            batch[key] = torch.stack([f[key] for f in features])
-        return batch
-
     # Initialize trainer
     trainer = EmbeddingTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         # eval_dataset=eval_dataset,
-        data_collator=data_collator,
     )
 
     # Train
-    trainer.train(resume_from_checkpoint=pathlib.Path('output').exists())
+    output_path = pathlib.Path('output')
+    trainer.train(resume_from_checkpoint=output_path.exists() and any(
+        name for name in os.listdir(output_path) if name.startswith('checkpoint')))
 
     # Save the final model
     trainer.model.model.save_pretrained('weebiee')
