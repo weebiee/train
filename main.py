@@ -1,12 +1,13 @@
 import json
 import os
 import pathlib
+from functools import cached_property
 from typing import Union, Any, Optional
-from functools import cache, cached_property
 
 import torch
 import torch.nn.functional as F
 from peft import LoraConfig, TaskType
+from tokenizers import Tokenizer
 from torch import nn
 from torch.utils.data import Dataset
 from transformers import (
@@ -16,7 +17,6 @@ from transformers import (
     AutoModel,
     BitsAndBytesConfig
 )
-from tokenizers import Tokenizer
 
 
 class EmbeddingDataset(Dataset):
@@ -90,6 +90,9 @@ class EmbeddingModel(torch.nn.Module):
         sum_mask = torch.clamp(attention_mask_expanded.sum(1), min=1e-9)
         return sum_embeddings / sum_mask
 
+    def gradient_checkpointing_enable(self, *args, **kwargs):
+        self.model.gradient_checkpointing_enable(*args, **kwargs)
+
 
 class EmbeddingTrainer(Trainer):
     @cached_property
@@ -148,14 +151,13 @@ class EmbeddingTrainer(Trainer):
 
         return loss, logits, labels
 
-    def compute_loss(self, model, inputs, num_items_in_batch, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, *args, **kwargs):
         # Extract query and positive inputs
         query_embeddings = model(
             input_ids=inputs['query_input_ids'],
             attention_mask=inputs['query_attention_mask']
         )
 
-        label_idx = inputs['response_sentiment_idx']
         response_embeddings = model(
             input_ids=self.sentiment_tokens['input_ids'],
             attention_mask=self.sentiment_tokens['attention_mask']
@@ -165,9 +167,11 @@ class EmbeddingTrainer(Trainer):
         query_embeddings = F.normalize(query_embeddings, p=2, dim=1)
         response_embeddings = F.normalize(response_embeddings, p=2, dim=1)
 
-        # Cosine similarity loss
-        similarities = F.cosine_similarity(query_embeddings, response_embeddings, dim=1)
-        loss = 1 - similarities.mean()  # Convert similarity to loss
+        similarities = query_embeddings @ response_embeddings.T
+        # cross-entropy loss
+        y_hat = torch.softmax(similarities, dim=-1)
+        y = inputs['response_sentiment_idx']
+        loss = (-torch.log(y_hat[:, y])).mean()
 
         return (loss, {"loss": loss}) if return_outputs else loss
 
@@ -193,7 +197,8 @@ def main():
     training_args = TrainingArguments(
         output_dir="output",
         num_train_epochs=1,
-        per_device_train_batch_size=1,
+        per_device_train_batch_size=5,
+        gradient_checkpointing=True,
         # eval_strategy="steps",
         # eval_steps=50,
         save_steps=50,
