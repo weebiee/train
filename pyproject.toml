@@ -1,0 +1,14 @@
+[project]
+name = "weebiee-train"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.7.0",
+    "bitsandbytes>=0.46.0",
+    "deepspeed>=0.17.0",
+    "ms-swift>=3.4.1.post1",
+    "peft>=0.15.2",
+    "sentence-transformers>=4.1.0",
+]
