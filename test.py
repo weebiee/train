@@ -5,7 +5,7 @@ from transformers import (AutoTokenizer)
 
 import evaluate
 from evaluate import BEST_PROMPT
-from model import EmbeddingModel
+from model.model import EmbeddingModel
 
 
 def last_token_pool(last_hidden_states: Tensor,
@@ -24,7 +24,7 @@ def main():
     max_length = 8192
 
     tokenizer = AutoTokenizer.from_pretrained(base_model_name, trust_remote_code=True)
-    model = EmbeddingModel(base_model_name, 3, addition_path='trained/addition.pt')
+    model = EmbeddingModel(base_model_name, 3, addition_path='model/addition.pt')
 
     def compute(queries: np.ndarray, classes: np.ndarray):
         queries = np.char.add(np.array(list(BEST_PROMPT for _ in queries)), queries)

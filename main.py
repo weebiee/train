@@ -8,7 +8,7 @@ from transformers import (
     Trainer,
 )
 
-from model import EmbeddingModel, EmbeddingDataset
+from model.model import EmbeddingModel, EmbeddingDataset
 
 
 class EmbeddingTrainer(Trainer):
@@ -77,7 +77,7 @@ def main():
         name for name in os.listdir(output_path) if name.startswith('checkpoint')))
 
     # Save the final model
-    trainer.model.save('trained/addition.pt')
+    trainer.model.save('model/addition.pt')
     tokenizer.save_pretrained("output")
 
 
