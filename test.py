@@ -4,8 +4,7 @@ from torch import Tensor
 from transformers import (AutoTokenizer)
 
 import evaluate
-from evaluate import BEST_PROMPT
-from model.model import EmbeddingModel
+from model.model import BEST_PROMPT, EmbeddingModel
 
 
 def last_token_pool(last_hidden_states: Tensor,

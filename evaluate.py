@@ -35,6 +35,3 @@ def posts(fd, total_size: int, chunk_size: int, compute: Callable[[np.ndarray, n
         chunk_size=chunk_size,
         compute=compute
     )
-
-
-BEST_PROMPT = 'Instruct: Given the tweet, find the best matching sentiment, be it positive, negative or neutral.\nTweet:'
