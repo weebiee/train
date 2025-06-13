@@ -36,7 +36,6 @@ def main():
     with open('dataset/test.csv', 'rt') as fd:
         f1, cm = evaluate.posts(
             fd=fd,
-            total_size=20_000,
             chunk_size=5,
             compute=compute
         )
