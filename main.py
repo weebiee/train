@@ -46,7 +46,7 @@ def main():
     # Training arguments
     training_args = TrainingArguments(
         output_dir="output",
-        num_train_epochs=1,
+        num_train_epochs=3,
         per_device_train_batch_size=5,
         gradient_checkpointing=False,
         # eval_strategy="steps",
@@ -55,7 +55,7 @@ def main():
         save_total_limit=5,
         logging_steps=50,
         warmup_ratio=0.05,
-        learning_rate=5e-6,
+        learning_rate=1e-3,
         bf16=True,
         dataloader_num_workers=4,
         dataloader_drop_last=True,
