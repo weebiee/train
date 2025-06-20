@@ -10,5 +10,6 @@ dependencies = [
     "deepspeed>=0.17.0",
     "ms-swift>=3.4.1.post1",
     "peft>=0.15.2",
+    "schedulefree>=1.4.1",
     "sentence-transformers>=4.1.0",
 ]
